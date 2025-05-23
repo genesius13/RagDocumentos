@@ -35,7 +35,7 @@ from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
 
 # --- Configurações e Constantes ---
-APP_TITLE = "🤖 Chat RAG Epaminondas v2.4.0" # Nova versão com SelfQueryRetriever
+APP_TITLE = "🤖 Chat RAG Epaminondas v2.4.1" # Nova versão com SelfQueryRetriever e Streaming
 APP_ICON = "🤖"
 PAGE_LAYOUT = "wide"
 
@@ -49,16 +49,15 @@ SUPPORTED_FILE_TYPES = {
     "md": TextLoader, "csv": TextLoader, "log": TextLoader,
 }
 
-# ... (o resto das suas configurações e inicializações de API/Embedding permanecem iguais) ...
 # --- Configuração da Chave da API ---
-#try:
+# Tenta obter a chave da API do Streamlit Secrets primeiro, depois das variáveis de ambiente
 GOOGLE_API_KEY_GENAI = st.secrets.get("GOOGLE_API_KEY") 
-#except AttributeError: 
-#    GOOGLE_API_KEY_GENAI = os.environ.get("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY_GENAI: 
+    GOOGLE_API_KEY_GENAI = os.environ.get("GOOGLE_API_KEY")
 
-#if not GOOGLE_API_KEY_GENAI:
- #   st.error("Chave da API do Google (GOOGLE_API_KEY) não configurada.")
-  #  st.stop()
+if not GOOGLE_API_KEY_GENAI:
+    st.error("Chave da API do Google (GOOGLE_API_KEY) não configurada.")
+    st.stop() # Impede a execução se a chave não estiver disponível
 
 try:
     embedding_function = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GOOGLE_API_KEY_GENAI)
@@ -194,7 +193,7 @@ def add_chunks_to_vector_store(chunks: List[Document], vector_store: Optional[Ch
             if not batch: # Segurança extra
                 continue
 
-            st.write(f"  -> Adicionando lote {i // BATCH_SIZE + 1}: Chunks {i+1} a {min(i + BATCH_SIZE, total_chunks)}...")
+            st.write(f"  -> Adicionando lote {i // BATCH_SIZE + 1}: Chunks {i+1} a {min(i + BATCH_SIZE, total_chunks)}...")
             vector_store.add_documents(batch)
             progress_bar.progress((i + BATCH_SIZE) / total_chunks, text=f"Processando chunks {min(i + BATCH_SIZE, total_chunks)} de {total_chunks}...")
 
@@ -210,56 +209,64 @@ def add_chunks_to_vector_store(chunks: List[Document], vector_store: Optional[Ch
 
 def get_rag_chain(llm: ChatGoogleGenerativeAI, retriever: Any) -> Any:
     # Prompt do sistema com o espaço duplo corrigido
-    system_prompt = "Você é um assistente de IA especializado em responder perguntas com base no contexto fornecido. Utilize markdown nas respostas. Responda de forma clara e concisa. Analise o contexto. Se a resposta não estiver no contexto, diga que não sabe. Responda em português brasileiro.\n\nContexto:\n{context}"
+    system_prompt = """Você é um assistente de IA especializado em responder perguntas com base no contexto fornecido. 
+    Utilize markdown nas respostas. Use linguagem coloquial. Analise o contexto. 
+    Se a resposta não estiver no contexto, diga que não sabe. 
+    Responda em português brasileiro.\n\n
+    Contexto:\n{context}"""
+    
     prompt_template = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", "{input}")])
     document_chain = create_stuff_documents_chain(llm=llm, prompt=prompt_template)
     return create_retrieval_chain(retriever=retriever, combine_docs_chain=document_chain)
 
-def ask_llm(model_name: str, query: str, vector_store: Chroma) -> Tuple[str, List[Document]]:
-    if not vector_store: return "O banco de vetores não está pronto. Adicione documentos.", []
+def ask_llm(model_name: str, query: str, vector_store: Chroma): # Removed Tuple from return type hint
+    if not vector_store:
+        yield {"answer_chunk": "O banco de vetores não está pronto. Adicione documentos.", "sources": None}
+        return
     
     try:
-        # LLM principal para geração da resposta final
+        # LLM principal para geração da resposta final (com streaming habilitado)
         llm_answer = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=GOOGLE_API_KEY_GENAI,
-            temperature=0.2
+            temperature=0.2,
+            streaming=True # Habilita o streaming para a resposta final
         )
 
         # LLM para o SelfQueryRetriever (pode ser o mesmo ou um mais simples/rápido)
-        # Usar temperatura 0 para geração de query mais determinística
         llm_self_query = ChatGoogleGenerativeAI(
-            model=model_name, # Para simplicidade, usamos o mesmo. Pode-se otimizar depois.
+            model=model_name, 
             google_api_key=GOOGLE_API_KEY_GENAI,
             temperature=0 
         )
 
         # Descrição dos metadados para o SelfQueryRetriever
-        # É crucial que o metadado 'source' esteja presente e correto nos seus chunks
         metadata_field_info = [
             AttributeInfo(
                 name="source",
                 description="O nome do arquivo ou caminho do documento original. Exemplos: 'manual_produto_X.pdf', 'guia_instalacao.docx'. Use este filtro se a pergunta do usuário mencionar explicitamente um nome de documento ou pedir informações de um documento específico. Se a pergunta for geral e não especificar um documento, não use este filtro.",
                 type="string",
             ),
+            # Adicione mais atributos se seus documentos tiverem outros metadados úteis para filtragem
+            # AttributeInfo(
+            #     name="page",
+            #     description="O número da página de onde o trecho foi extraído.",
+            #     type="integer",
+            # ),
         ]
         document_content_description = "Conteúdo de um trecho (chunk) de um documento técnico ou manual."
 
         retriever = None
         try:
-            st.write("🔄 Tentando usar SelfQueryRetriever...") # Feedback para o dev
             retriever = SelfQueryRetriever.from_llm(
                 llm_self_query,
-                vector_store, # Sua instância do ChromaDB
+                vector_store, 
                 document_content_description,
                 metadata_field_info,
-                verbose=True, # MUITO útil para debugging. Mostra a query gerada no console.
-                # use_original_query=True, # Se True, usa a query original se a tradução falhar.
-                                           # Pode ser útil como fallback. Teste o comportamento.
+                verbose=False, # Definir para False para evitar poluir o console do Streamlit com logs internos do LangChain
             )
-            st.write("✅ SelfQueryRetriever pronto.")
         except Exception as e:
-            st.error(f"Erro ao inicializar SelfQueryRetriever: {e}. Usando retriever padrão.")
+            st.warning(f"Erro ao inicializar SelfQueryRetriever: {e}. Usando retriever padrão.") 
             # Fallback para o retriever padrão se o SelfQueryRetriever falhar
             retriever = vector_store.as_retriever(
                 search_type="similarity",
@@ -267,17 +274,30 @@ def ask_llm(model_name: str, query: str, vector_store: Chroma) -> Tuple[str, Lis
             )
         
         if retriever is None: # Segurança adicional
-             st.error("Falha crítica ao definir o retriever. Usando retriever padrão.")
-             retriever = vector_store.as_retriever(search_kwargs={'k': 5})
+            st.error("Falha crítica ao definir o retriever. Usando retriever padrão.")
+            retriever = vector_store.as_retriever(search_kwargs={'k': 5})
 
+        rag_chain = get_rag_chain(llm_answer, retriever)
 
-        rag_response = get_rag_chain(llm_answer, retriever).invoke({"input": query})
-        return rag_response.get("answer", "Não foi possível gerar uma resposta com o contexto."), rag_response.get("context", [])
+        full_answer_content = ""
+        retrieved_documents = []
+
+        # Itera sobre os chunks da resposta streamada
+        for chunk in rag_chain.stream({"input": query}):
+            if "answer" in chunk:
+                full_answer_content += chunk["answer"]
+                yield {"answer_chunk": chunk["answer"]} # Emite o chunk da resposta
+            if "context" in chunk:
+                retrieved_documents.extend(chunk["context"])
+        
+        # Após o loop, emite a resposta completa e as fontes
+        yield {"final_answer": full_answer_content, "sources": retrieved_documents}
+
     except Exception as e: 
         st.error(f"Erro ao comunicar com o LLM ou ao processar a cadeia RAG: {e}")
-        return "Desculpe, ocorreu um erro ao processar sua pergunta.", []
+        yield {"answer_chunk": "Desculpe, ocorreu um erro ao processar sua pergunta.", "sources": None}
 
-# Função do navegador de diretórios (do seu código v2.3 - sem o st.dialog por enquanto para manter a base)
+# Função do navegador de diretórios
 def display_directory_browser():
     st.markdown(f"**Navegando em:** `{st.session_state.current_browse_path}`")
     if st.button("📂 Usar este diretório", key="select_current_browsed_dir", use_container_width=True):
@@ -317,11 +337,6 @@ if 'dir_path_input_value' not in st.session_state: st.session_state.dir_path_inp
 if 'confirm_delete_db_prompt' not in st.session_state: st.session_state.confirm_delete_db_prompt = False
 if 'initial_greeting_added' not in st.session_state: st.session_state.initial_greeting_added = False
 
-if st.session_state.vector_store and not st.session_state.chat_history and not st.session_state.get('initial_greeting_added', False):
-    greeting_message = "Olá! Me chamo Epaminondas e estou aqui para te ajudar com informações de suporte com base nas documentações fornecidas."
-    st.session_state.chat_history.append({ "query": "", "answer": greeting_message, "sources": [] })
-    st.session_state.initial_greeting_added = True
-
 # --- Interface Streamlit ---
 st.set_page_config(page_title=APP_TITLE, page_icon=APP_ICON, layout=PAGE_LAYOUT)
 st.title(APP_TITLE); st.markdown("Interaja com seus documentos usando o poder da IA Generativa do Google.")
@@ -347,8 +362,8 @@ with st.sidebar:
     def sync_text_input_to_dir_path_state(): st.session_state.dir_path_input_value = st.session_state.dir_path_widget_key
     current_dir_path_for_input = st.session_state.get('dir_path_input_value', "")
     st.text_input("Caminho do diretório:", value=current_dir_path_for_input, key="dir_path_widget_key", 
-                   on_change=sync_text_input_to_dir_path_state, placeholder="/caminho/docs",
-                   help="Forneça o caminho ou use o navegador.")
+                    on_change=sync_text_input_to_dir_path_state, placeholder="/caminho/docs",
+                    help="Forneça o caminho ou use o navegador.")
     with st.expander("Procurar Diretório no Servidor", expanded=False): display_directory_browser()
     if st.button("Processar Diretório Informado", use_container_width=True, key="process_directory_from_input_button"):
         dir_to_process_str = st.session_state.get('dir_path_input_value', "").strip()
@@ -392,7 +407,7 @@ with st.sidebar:
 if st.session_state.get('file_processing_errors'):
     st.subheader("⚠️ Notificações de Erro no Processamento de Arquivos")
     for error_info in st.session_state.file_processing_errors:
-        with st.expander(f"Falha: {error_info['filename']} ({error_info['timestamp']})", expanded=True): # Expandido por padrão
+        with st.expander(f"Falha: {error_info['filename']} ({error_info['timestamp']})", expanded=True): 
             st.markdown(f"**Detalhes:** {error_info['error_details']}")
             st.markdown(f"**Sugestão:** {error_info['suggestion']}")
     if st.button("Limpar Notificações de Erro", key="clear_error_notifications"):
@@ -405,29 +420,76 @@ if not st.session_state.vector_store:
 else:
     if hasattr(st.session_state, 'db_loaded_on_startup_toast_pending') and st.session_state.db_loaded_on_startup_toast_pending:
         st.toast("Base pré-existente carregada!", icon="🗄️"); st.session_state.db_loaded_on_startup_toast_pending = False
-    st.success(f"Base carregada. Pergunte!", icon="✅")
+    
+    # Lógica da saudação inicial
+    if not st.session_state.chat_history and st.session_state.vector_store and not st.session_state.get('initial_greeting_added', False):
+        greeting_message = "Olá! Me chamo Epaminondas e estou aqui para te ajudar com informações de suporte com base nas documentações fornecidas. A base está carregada e pronta para suas perguntas!"
+        st.session_state.chat_history.append({ "query": "", "answer": greeting_message, "sources": [] })
+        st.session_state.initial_greeting_added = True
+        st.rerun() # Adicionado para exibir a saudação imediatamente
+
+    # Exibição do histórico de chat
     if st.session_state.chat_history:
         st.subheader("📜 Histórico do Chat")
-        for i, chat_item in enumerate(reversed(st.session_state.chat_history)): 
+        for i, chat_item in enumerate(st.session_state.chat_history): 
             show_user_query_bubble = True
-            if chat_item["query"] == "" and i == (len(st.session_state.chat_history) - 1) and st.session_state.get('initial_greeting_added', False):
-                 show_user_query_bubble = False
+            # Condição para a saudação inicial (primeiro item com query vazia)
+            if chat_item["query"] == "" and i == 0 and st.session_state.get('initial_greeting_added', False):
+                show_user_query_bubble = False
+            
             if show_user_query_bubble:
-                 with st.chat_message("user", avatar="👤"): st.markdown(chat_item["query"])
+                with st.chat_message("user", avatar="👤"): st.markdown(chat_item["query"])
+            
             with st.chat_message("assistant", avatar=APP_ICON):
                 st.markdown(chat_item["answer"])
                 if chat_item.get("sources"):
                     with st.expander("Ver fontes citadas"):
                         for idx, doc in enumerate(chat_item["sources"]):
-                            st.markdown(f"**Fonte {idx+1}:** `{doc.metadata.get('source', 'N/A')}` ({doc.metadata.get('page', 'N/P') if 'page' in doc.metadata else ''})")
+                            st.markdown(f"**Fonte {idx+1}:** `{doc.metadata.get('source', 'N/A')}` (Página: {doc.metadata.get('page', 'N/A') if 'page' in doc.metadata else 'N/A'})")
                             st.caption(f"> {doc.page_content[:200]}...") 
         st.markdown("---")
+
     user_query = st.chat_input("Digite sua pergunta sobre os documentos:")
     if user_query:
-        with st.spinner(f"Consultando {selected_model}..."):
-            answer, sources = ask_llm(selected_model, user_query, st.session_state.vector_store)
-            st.session_state.chat_history.append({"query": user_query, "answer": answer, "sources": sources})
-            st.rerun()
+        # Adicionar a pergunta do usuário ao histórico IMEDIATAMENTE para que apareça na tela
+        st.session_state.chat_history.append({"query": user_query, "answer": "", "sources": []}) 
+        
+        # Exibir a bolha do usuário imediatamente
+        with st.chat_message("user", avatar="👤"):
+            st.markdown(user_query)
+        
+        # Criar um placeholder para a resposta do assistente que será atualizado
+        with st.chat_message("assistant", avatar=APP_ICON):
+            message_placeholder = st.empty() # Este será o elemento que vamos atualizar
+            full_response = ""
+            response_sources = [] # Para armazenar as fontes que vêm no final
+
+            with st.spinner(f"Consultando {selected_model}..."):
+                # Itera sobre os chunks que a função ask_llm agora "gera"
+                for response_data in ask_llm(selected_model, user_query, st.session_state.vector_store):
+                    if response_data.get("answer_chunk"):
+                        full_response += response_data["answer_chunk"]
+                        message_placeholder.markdown(full_response + "▌") # Adiciona um cursor para simular digitação
+                    elif response_data.get("final_answer"): # Quando a resposta final e as fontes chegam
+                        full_response = response_data["final_answer"] # Garante que a resposta final é a correta
+                        response_sources = response_data.get("sources", [])
+                        message_placeholder.markdown(full_response) # Exibe a resposta final sem o cursor
+            
+            # Após o loop (resposta completa gerada), atualiza o último item do chat_history
+            # com a resposta e as fontes finais.
+            st.session_state.chat_history[-1]["answer"] = full_response
+            st.session_state.chat_history[-1]["sources"] = response_sources
+
+            # Exibe as fontes AQUI, depois que a resposta completa foi streamada e salva.
+            if response_sources:
+                with st.expander("Ver fontes citadas"):
+                    for idx, doc in enumerate(response_sources):
+                        st.markdown(f"**Fonte {idx+1}:** `{doc.metadata.get('source', 'N/A')}` (Página: {doc.metadata.get('page', 'N/A') if 'page' in doc.metadata else 'N/A'})")
+                        st.caption(f"> {doc.page_content[:200]}...")
+        
+        # Não é mais necessário st.rerun() aqui, pois a UI é atualizada via message_placeholder
+        # e o histórico é salvo. O Streamlit automaticamente reagirá às mudanças de estado
+        # quando o próximo input for digitado ou se o usuário interagir.
 
 st.sidebar.markdown("---"); st.sidebar.markdown(f"<small>{APP_TITLE}</small>", unsafe_allow_html=True)
 if st.session_state.vector_store:
