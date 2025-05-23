@@ -1,3 +1,14 @@
+# --- HACK for pysqlite3 ---
+# MUST be at the top BEFORE any imports that might use sqlite3
+try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+    print("✅ Sucesso: Trocado sqlite3 por pysqlite3.")
+except ImportError:
+    print("⚠️ Aviso: pysqlite3 não encontrado, usando sqlite3 do sistema.")
+# --- Fim do HACK ---
+
 import os
 import tempfile
 import streamlit as st
