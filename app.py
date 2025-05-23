@@ -51,14 +51,14 @@ SUPPORTED_FILE_TYPES = {
 
 # ... (o resto das suas configurações e inicializações de API/Embedding permanecem iguais) ...
 # --- Configuração da Chave da API ---
-try:
-    GOOGLE_API_KEY_GENAI = st.secrets.get("GOOGLE_API_KEY") 
-except AttributeError: 
-    GOOGLE_API_KEY_GENAI = os.environ.get("GOOGLE_API_KEY")
+#try:
+GOOGLE_API_KEY_GENAI = st.secrets.get("GOOGLE_API_KEY") 
+#except AttributeError: 
+#    GOOGLE_API_KEY_GENAI = os.environ.get("GOOGLE_API_KEY")
 
-if not GOOGLE_API_KEY_GENAI:
-    st.error("Chave da API do Google (GOOGLE_API_KEY) não configurada.")
-    st.stop()
+#if not GOOGLE_API_KEY_GENAI:
+ #   st.error("Chave da API do Google (GOOGLE_API_KEY) não configurada.")
+  #  st.stop()
 
 try:
     embedding_function = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GOOGLE_API_KEY_GENAI)
