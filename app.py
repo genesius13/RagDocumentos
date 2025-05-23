@@ -159,22 +159,54 @@ def get_vector_store(force_new: bool = False) -> Optional[Chroma]:
     return None
 
 def add_chunks_to_vector_store(chunks: List[Document], vector_store: Optional[Chroma]) -> Optional[Chroma]:
-    if not chunks: return vector_store
+    if not chunks: 
+        return vector_store
+
+    BATCH_SIZE = 100 # Defina um tamanho de lote razoável (teste 50 ou 100)
+    total_chunks = len(chunks)
+
     try:
         # Garante que todos os chunks tenham 'source' nos metadados
         for chunk in chunks:
             if 'source' not in chunk.metadata or not chunk.metadata['source']:
-                chunk.metadata['source'] = 'desconhecido' # Fallback, mas idealmente deve ser definido antes
-                # st.warning(f"Chunk sem 'source' encontrado: {chunk.page_content[:50]}...")
+                chunk.metadata['source'] = 'desconhecido'
 
-
-        if vector_store: vector_store.add_documents(chunks); st.success(f"{len(chunks)} chunks adicionados.", icon="➕")
-        else:
+        # Se não houver vector_store, crie-o com o primeiro lote
+        if not vector_store:
+            st.write(f"✨ Criando novo DB com o primeiro lote (até {BATCH_SIZE} de {total_chunks} chunks)...")
             PERSIST_DIRECTORY.mkdir(parents=True, exist_ok=True)
-            vector_store = Chroma.from_documents(chunks, embedding_function, str(PERSIST_DIRECTORY))
-            st.success(f"Novo DB criado com {len(chunks)} chunks.", icon="✨")
-        vector_store.persist(); return vector_store
-    except Exception as e: st.error(f"Erro ao adicionar ao DB: {e}"); return vector_store
+            vector_store = Chroma.from_documents(
+                chunks[:BATCH_SIZE], 
+                embedding_function, 
+                str(PERSIST_DIRECTORY)
+            )
+            start_index = BATCH_SIZE
+            st.success(f"Novo DB criado com os primeiros {min(BATCH_SIZE, total_chunks)} chunks.", icon="✨")
+        else:
+            start_index = 0 # Se já existe, começa do início
+            st.write(f"➕ Adicionando {total_chunks} chunks ao DB existente...")
+
+        # Adicione os lotes restantes (ou todos, se o DB já existia)
+        progress_bar = st.progress(start_index / total_chunks, text=f"Processando chunks {start_index} de {total_chunks}...")
+        
+        for i in range(start_index, total_chunks, BATCH_SIZE):
+            batch = chunks[i:i + BATCH_SIZE]
+            if not batch: # Segurança extra
+                continue
+
+            st.write(f"  -> Adicionando lote {i // BATCH_SIZE + 1}: Chunks {i+1} a {min(i + BATCH_SIZE, total_chunks)}...")
+            vector_store.add_documents(batch)
+            progress_bar.progress((i + BATCH_SIZE) / total_chunks, text=f"Processando chunks {min(i + BATCH_SIZE, total_chunks)} de {total_chunks}...")
+
+        progress_bar.empty() # Limpa a barra de progresso
+        vector_store.persist()
+        st.success(f"Todos os {total_chunks} chunks foram processados e adicionados/salvos!", icon="✅")
+        return vector_store
+
+    except Exception as e:
+        st.error(f"Erro ao adicionar ao DB: {e}")
+        # Retorna o vector_store como estava antes do erro (pode ser None ou parcial)
+        return vector_store
 
 def get_rag_chain(llm: ChatGoogleGenerativeAI, retriever: Any) -> Any:
     # Prompt do sistema com o espaço duplo corrigido
