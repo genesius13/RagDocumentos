@@ -52,7 +52,7 @@ SUPPORTED_FILE_TYPES = {
 # ... (o resto das suas configurações e inicializações de API/Embedding permanecem iguais) ...
 # --- Configuração da Chave da API ---
 try:
-    GOOGLE_API_KEY_GENAI = st.secrets.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    GOOGLE_API_KEY_GENAI = st.secrets.get("GOOGLE_API_KEY") 
 except AttributeError: 
     GOOGLE_API_KEY_GENAI = os.environ.get("GOOGLE_API_KEY")
 
