@@ -178,7 +178,7 @@ def add_chunks_to_vector_store(chunks: List[Document], vector_store: Optional[Ch
 
 def get_rag_chain(llm: ChatGoogleGenerativeAI, retriever: Any) -> Any:
     # Prompt do sistema com o espaço duplo corrigido
-    system_prompt = "Você é um assistente de IA especializado em responder perguntas com base no contexto fornecido. Responda de forma clara e concisa. Analise o contexto. Se a resposta não estiver no contexto, diga que não sabe. Responda em português brasileiro.\n\nContexto:\n{context}"
+    system_prompt = "Você é um assistente de IA especializado em responder perguntas com base no contexto fornecido. Utilize markdown nas respostas. Responda de forma clara e concisa. Analise o contexto. Se a resposta não estiver no contexto, diga que não sabe. Responda em português brasileiro.\n\nContexto:\n{context}"
     prompt_template = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", "{input}")])
     document_chain = create_stuff_documents_chain(llm=llm, prompt=prompt_template)
     return create_retrieval_chain(retriever=retriever, combine_docs_chain=document_chain)
