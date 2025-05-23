@@ -162,7 +162,7 @@ def add_chunks_to_vector_store(chunks: List[Document], vector_store: Optional[Ch
     if not chunks: 
         return vector_store
 
-    BATCH_SIZE = 100 # Defina um tamanho de lote razoável (teste 50 ou 100)
+    BATCH_SIZE = 50 # Defina um tamanho de lote razoável (teste 50 ou 100)
     total_chunks = len(chunks)
 
     try:
