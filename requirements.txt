@@ -1,6 +1,8 @@
 google_api_python_client==2.169.0
 langchain==0.3.25
 langchain_chroma==0.2.4
+chromadb
+pysqlite3-binary
 langchain_community==0.3.24
 langchain_google_genai==2.1.4
 langchain_text_splitters==0.3.8
