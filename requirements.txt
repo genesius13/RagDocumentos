@@ -9,3 +9,4 @@ langchain_text_splitters==0.3.8
 streamlit==1.45.1
 protobuf==4.25.3
 unstructured[docx]
+lark
