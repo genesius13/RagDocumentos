@@ -43,7 +43,7 @@ PERSIST_DIRECTORY = Path("db_chroma_epaminondas")
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 400
 MODEL_OPTIONS = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.0-pro', 'gemini-pro'] 
-DEFAULT_MODEL = 'gemini-1.5-flash-latest'
+DEFAULT_MODEL = 'gemini-2.0-flash'
 SUPPORTED_FILE_TYPES = {
     "pdf": PyPDFLoader, "docx": UnstructuredWordDocumentLoader, "txt": TextLoader,
     "md": TextLoader, "csv": TextLoader, "log": TextLoader,
