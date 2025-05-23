@@ -6,3 +6,4 @@ langchain_google_genai==2.1.4
 langchain_text_splitters==0.3.8
 streamlit==1.45.1
 protobuf==4.25.3
+unstructured[docx]
